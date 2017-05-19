@@ -15,6 +15,7 @@ function [ output_args ] = trainOrientationSupervised( dbTrain, dbVal, varargin 
         'backPropToLayer', 1, ...
         'fixLayers', [], ...
         'nNegChoice', 10, ...
+        'nPosChoice', 2, ...
         'nNegCap', 10, ...
         'nNegCache', 10, ...
         'nEpoch', 10, ...
@@ -47,7 +48,6 @@ function [ output_args ] = trainOrientationSupervised( dbTrain, dbVal, varargin 
         );
     paths = localPaths();
     opts = vl_argparse(opts, varargin);
-    [obj, auxData] = initObj(dbTrain);
         
     if isempty(opts.sessionID),
         if opts.startEpoch>1, error('Have to specify sessionID to restart'); end
@@ -55,25 +55,84 @@ function [ output_args ] = trainOrientationSupervised( dbTrain, dbVal, varargin 
     end
     if isempty(opts.fixLayers), opts.fixLayers= {}; end;
     
-    %% load net and add netvlad
-    net = loadNet(opts.netID, opts.layerName);
-    %net = initializeCharacterCNN;
-    net = addLayers(net, opts, dbTrain);
-    
-    %% back prop settings
-    if isempty(opts.backPropToLayer)
-        opts.backPropToLayer= 1;
-    else
-        if ~isnumeric( opts.backPropToLayer )
-            assert( isstr(opts.backPropToLayer) );
-            opts.backPropToLayer= relja_whichLayer(net, opts.backPropToLayer);
+    %% initial checkpoints
+    if opts.startEpoch<2
+        
+        % ----- Checkpoint names
+        
+        if ~isempty(opts.checkpoint0suffix)
+            opts.checkpoint0suffix= [opts.checkpoint0suffix, '_'];
         end
-    end
-    opts.backPropToLayerName= net.layers{opts.backPropToLayer}.name;
-    opts.backPropDepth= length(net.layers)-opts.backPropToLayer+1;
-    assert( all(ismember(opts.fixLayers, relja_layerNames(net))) );
-
-    display(opts);
+        if isempty(opts.dbCheckpoint0)
+            opts.dbCheckpoint0= sprintf('%s%s_%s_%s_%s_%sdb.bin', opts.outPrefix, dbTrain.name, opts.netID, opts.layerName, opts.method, opts.checkpoint0suffix);
+        end
+        if isempty(opts.qCheckpoint0)
+            opts.qCheckpoint0= sprintf('%s%s_%s_%s_%s_%sq.bin', opts.outPrefix, dbTrain.name, opts.netID, opts.layerName, opts.method, opts.checkpoint0suffix);
+        end
+        if isempty(opts.dbCheckpoint0val)
+            opts.dbCheckpoint0val= sprintf('%s%s_%s_%s_%s_%sdb.bin', opts.outPrefix, dbVal.name, opts.netID, opts.layerName, opts.method, opts.checkpoint0suffix);
+        end
+        if isempty(opts.qCheckpoint0val)
+            opts.qCheckpoint0val= sprintf('%s%s_%s_%s_%s_%sq.bin', opts.outPrefix, dbVal.name, opts.netID, opts.layerName, opts.method, opts.checkpoint0suffix);
+        end
+        
+        % ----- Network setup
+        
+        net= loadNet(opts.netID, opts.layerName);
+        
+        % --- Add my layers
+        net= addLayers(net, opts, dbTrain);
+        
+        % --- BackProp depth
+        if isempty(opts.backPropToLayer)
+            opts.backPropToLayer= 1;
+        else
+            if ~isnumeric( opts.backPropToLayer )
+                assert( isstr(opts.backPropToLayer) );
+                opts.backPropToLayer= relja_whichLayer(net, opts.backPropToLayer);
+            end
+        end
+        opts.backPropToLayerName= net.layers{opts.backPropToLayer}.name;
+        opts.backPropDepth= length(net.layers)-opts.backPropToLayer+1;
+        assert( all(ismember(opts.fixLayers, relja_layerNames(net))) );
+        
+        display(opts);
+       
+        % ----- Init
+        [obj, auxData] = initObj(dbTrain);
+        
+    else
+        % ----- Continue from an epoch
+        ID= sprintf('ep%06d_latest', opts.startEpoch-1);
+        outFnCurrent= sprintf('%s%s_%s.mat', opts.outPrefix, opts.sessionID, ID);
+        tmpopts= opts;
+        load(outFnCurrent, 'net', 'obj', 'opts', 'auxData'); % rewrites opts
+        clear ID outFnCurrent;
+        
+        opts.startEpoch= tmpopts.startEpoch;
+        opts.nEpoch= tmpopts.nEpoch;
+        opts.test0= false;
+        opts.useGPU= tmpopts.useGPU;
+        opts.numThreads= tmpopts.numThreads;
+        opts.batchSize= tmpopts.batchSize;
+        opts.computeBatchSize= tmpopts.computeBatchSize;
+        
+        if ~isfield(opts, 'dbCheckpoint0_orig')
+            opts.dbCheckpoint0_orig= opts.dbCheckpoint0;
+            opts.qCheckpoint0_orig= opts.qCheckpoint0;
+        end
+        opts.dbCheckpoint0= tmpopts.dbCheckpoint0;
+        opts.qCheckpoint0= tmpopts.qCheckpoint0;
+        
+        if isempty(opts.qCheckpoint0)
+            opts.dbCheckpoint0= sprintf('%s%s_%s_%s_%s_%s%s_ep%06d_db.bin', opts.outPrefix, dbTrain.name, opts.netID, opts.layerName, opts.method, opts.checkpoint0suffix, opts.sessionID, opts.startEpoch-1);
+        end
+        if isempty(opts.qCheckpoint0)
+            opts.qCheckpoint0= sprintf('%s%s_%s_%s_%s_%s%s_ep%06d_q.bin', opts.outPrefix, dbTrain.name, opts.netID, opts.layerName, opts.method, opts.checkpoint0suffix, opts.sessionID, opts.startEpoch-1);
+        end
+        
+        display(opts);
+   end
     
     %% prepare for train and optionally move to gpu
     net = netPrepareForTrain(net, opts.backPropToLayer);
@@ -82,13 +141,43 @@ function [ output_args ] = trainOrientationSupervised( dbTrain, dbVal, varargin 
         net = relja_simplenn_move(net, 'gpu');
     end
     
+    
+     if ~exist(opts.qCheckpoint0, 'file')
+        serialAllFeats(net, dbTrain.qPath, dbTrain.qImageFns, ...
+            opts.qCheckpoint0, 'useGPU', opts.useGPU, 'batchSize', opts.computeBatchSize);
+    end
+    if ~exist(opts.dbCheckpoint0, 'file')
+        serialAllFeats(net, dbTrain.dbPath, dbTrain.dbImageFns, ...
+            opts.dbCheckpoint0, 'useGPU', opts.useGPU, 'batchSize', opts.computeBatchSize);
+    end
+    if opts.test0
+        if ~exist(opts.qCheckpoint0val, 'file')
+            serialAllFeats(net, dbVal.qPath, dbVal.qImageFns, ...
+                opts.qCheckpoint0val, 'useGPU', opts.useGPU, 'batchSize', opts.computeBatchSize);
+        end
+        if ~exist(opts.dbCheckpoint0val, 'file')
+            serialAllFeats(net, dbVal.dbPath, dbVal.dbImageFns, ...
+                opts.dbCheckpoint0val, 'useGPU', opts.useGPU, 'batchSize', opts.computeBatchSize);
+        end
+        
+        [obj.pretrain.val.recall, obj.pretrain.val.rankloss]= ...
+            testFromFn(dbVal, opts.dbCheckpoint0val, opts.qCheckpoint0val, opts);
+        %{
+        [obj.pretrain.train.recall, obj.pretrain.train.rankloss]= ...
+            testFromFn(dbTrain, opts.dbCheckpoint0, opts.qCheckpoint0, opts);
+        %}
+        
+    end
+    
     %% train
     nBatches = floor( dbTrain.numQueries / opts.batchSize );
     trainOrder= randperm(dbTrain.numQueries);
     
     losses = [];
     lr = opts.learningRate;
-    figbatchloss = figure('Name', 'Loss per batch');
+    hfigbatchloss = figure('Name', 'Loss per batch');
+    figbatchloss = semilogy(1);
+    
     for iEpoch = 1 : opts.nEpoch
         ID = sprintf('ep%06d_latest', iEpoch);
         trainID = sprintf('%s_train', ID);
@@ -102,6 +191,12 @@ function [ output_args ] = trainOrientationSupervised( dbTrain, dbVal, varargin 
                 qID = qIDs(iQuery);
                 posIDs = dbTrain.nontrivialPosQ(qID);
                 if isempty(posIDs), continue; end
+                thisNumPos = size(posIDs, 1);
+                
+                %select at max nPosChoice of positive samples
+                posIDs = posIDs(randsample(thisNumPos, ...
+                                min(thisNumPos, opts.nPosChoice))); 
+                
                 negIDs = dbTrain.sampleNegsQ(qID, opts.nNegChoice);
                 labels = [0 ones(1, size(posIDs, 1)) -ones(1, size(negIDs, 1))];
                 thisBatchSize = thisBatchSize + size(labels, 2) - 1; %TODO check if correct
@@ -113,7 +208,7 @@ function [ output_args ] = trainOrientationSupervised( dbTrain, dbVal, varargin 
                 %implicitly due to running netPrepareForTrain before, see the 
                 %comments in the function for an explanation
                 res = vl_simplenn(net, ims, [], [], 'mode', ...
-                    'normal', 'conserveMemory', true); 
+                    'normal', 'conserveMemory', true, 'CuDNN', true); 
 
                 % because of the 'conserveMemory' the input is deleted, 
                 % restore it if needed
@@ -122,7 +217,7 @@ function [ output_args ] = trainOrientationSupervised( dbTrain, dbVal, varargin 
                 feats = reshape( gather(res(end).x), [], thisNumIms );
 
                 %% my loss
-                
+                %{
                 x_q = feats(:, find(labels == 0));   %query feats
                 x_p = feats(:, find(labels == 1));   %positive feats
                 x_n = feats(:, find(labels == -1));  %negative feats
@@ -141,11 +236,11 @@ function [ output_args ] = trainOrientationSupervised( dbTrain, dbVal, varargin 
                 dEdx_n = -2 .* repmat(x_q, [1 size(x_n, 2)]) - x_n ./ neg_denom_sq;
 
                 dEdx = [dEdx_q dEdx_p dEdx_n];
-
+                %}
                 
                 
                 %% triplet loss
-                %{
+                
                 x_q = feats(:, find(labels == 0));   %query feats
                 x_p = feats(:, find(labels == 1));   %positive feats
                 x_n = feats(:, find(labels == -1));  %negative feats
@@ -168,7 +263,7 @@ function [ output_args ] = trainOrientationSupervised( dbTrain, dbVal, varargin 
                 dEdx_n(find(E_term < 0), :) = 0;
 
                 dEdx = [dEdx_q dEdx_p dEdx_n];
-                %}
+               
                 if opts.useGPU
                     dEdx = gpuArray(dEdx);
                 end
@@ -176,7 +271,7 @@ function [ output_args ] = trainOrientationSupervised( dbTrain, dbVal, varargin 
                             'mode', 'normal', ...
                             'skipForward', true, ...
                             'backPropDepth', opts.backPropDepth, ...
-                            'conserveMemory', true)];
+                            'conserveMemory', true, 'CuDNN', true)];
                 clear dEdx_q;
                 clear dEdx_p;
                 clear dEdx_n;
@@ -195,11 +290,18 @@ function [ output_args ] = trainOrientationSupervised( dbTrain, dbVal, varargin 
             end %iQuery
 
             %% update net
+            if opts.useGPU
+                gpu = gpuDevice();
+            end
             updateNet(net, opts, lr, thisBatchSize, allRes);
+            clear allRes;
+            if opts.useGPU
+                wait(gpu);
+            end
             plotLoss(losses, figbatchloss);
-            %testNet(dbTrain, dbVal, net, opts, obj, auxData, iEpoch,...
-            %        trainID, valID); %just to try whether this works
-            relja_display('Batch: %f, loss: %f.', iBatch, losses(end));
+            if size(losses, 1) > 0
+                relja_display('Batch: %f, loss: %f.', iBatch, losses(end));
+            end 
         end
         %% update lr
         if mod(iEpoch, opts.lrDownFreq) == 0
@@ -234,16 +336,15 @@ function testNet(dbTrain, dbVal, net, opts, obj, auxData, iEpoch,...
                  trainID, valID)
     
     [qFeatVal, dbFeatVal] = computeAllFeats(dbVal, net, opts, valID, true);
-    [obj.val.recall(:, end+1), obj.val.rankloss(:, end+1) ...
-        ] = testNet(dbVal, net, opts, valID, qFeatVal, dbFeatVal);
+    [obj.val.recall(:, end+1), obj.val.rankloss(:, end+1)] = testNet(dbVal, net, opts, valID, qFeatVal, dbFeatVal);
     clear qFeatVal dbFeatVal;
 
 
     [qFeat, dbFeat]= computeAllFeats(dbTrain, net, opts, trainID, true);
 
 
-    [obj.train.recall(:, end+1), obj.train.rankloss(:, end+1) ...
-        ]= testNet(dbTrain, net, opts, trainID, qFeat, dbFeat);
+    %[obj.train.recall(:, end+1), obj.train.rankloss(:, end+1) ...
+    %    ]= testNet(dbTrain, net, opts, trainID, qFeat, dbFeat);
 
     % to save the results
     saveNet(net, obj, opts, auxData, ID, sprintf('epoch-end %d', iEpoch));
@@ -253,9 +354,9 @@ function testNet(dbTrain, dbVal, net, opts, obj, auxData, iEpoch,...
 end
 
 function plotLoss(losses, figloss)
-    figure(figloss);
-    semilogy(losses);
-    drawnow update
+    %semilogy(losses);
+    set(figloss, 'ydata', losses);
+    drawnow
 end
 
 function [net] = updateNet(net, opts, lr, thisBatchSize, allRes)
@@ -283,7 +384,6 @@ function [net] = updateNet(net, opts, lr, thisBatchSize, allRes)
             end
         end
     end
-    clear allRes;
 end
 
 function [ims, num] = loadImages(qID, posIDs, negIDs, dbTrain, net, opts)
