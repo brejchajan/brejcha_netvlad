@@ -341,8 +341,8 @@ function [ output_args ] = trainOrientationSupervised( dbTrain, dbVal, varargin 
         %% test
         testNow = iEpoch==opts.nEpoch || rem(iEpoch, opts.epochTestFrequency) == 0;
         if testNow
-            testNet(dbTrain, dbVal, net, opts, obj, auxData, iEpoch,...
-                    trainID, valID);
+            test(dbTrain, dbVal, net, opts, obj, auxData, iEpoch,...
+                    trainID, valID, ID);
         end
         relja_display('Epoch: %f.', iEpoch);
         %save net.mat net
@@ -359,8 +359,8 @@ function [obj, auxData] = initObj(dbTrain)
     auxData.numTrain= dbTrain.numQueries;
 end
 
-function testNet(dbTrain, dbVal, net, opts, obj, auxData, iEpoch,...
-                 trainID, valID)
+function test(dbTrain, dbVal, net, opts, obj, auxData, iEpoch,...
+                 trainID, valID, ID)
     
     [qFeatVal, dbFeatVal] = computeAllFeats(dbVal, net, opts, valID, true);
     [obj.val.recall(:, end+1), obj.val.rankloss(:, end+1)] = testNet(dbVal, net, opts, valID, qFeatVal, dbFeatVal);
