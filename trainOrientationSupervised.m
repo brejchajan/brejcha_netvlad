@@ -44,7 +44,8 @@ function [ output_args ] = trainOrientationSupervised( dbTrain, dbVal, varargin 
         'recallNs', [1:5, 10:5:100], ...
         'useGPU', true, ...
         'numThreads', 12, ...
-        'startEpoch', 1 ...
+        'startEpoch', 1, ...
+        'showTrainingImgs', true ...
         );
     paths = localPaths();
     opts = vl_argparse(opts, varargin);
@@ -141,8 +142,14 @@ function [ output_args ] = trainOrientationSupervised( dbTrain, dbVal, varargin 
         net = relja_simplenn_move(net, 'gpu');
     end
     
+    if ~isfield(net.meta.normalization, 'currentdataset')
+        net.meta.normalization.currentdataset = struct('averageImage', []);
+        net.meta.normalization.currentdataset.averageImage = averageImage(dbTrain);
+    end
     
-     if ~exist(opts.qCheckpoint0, 'file')
+    
+    %{
+    if ~exist(opts.qCheckpoint0, 'file')
         serialAllFeats(net, dbTrain.qPath, dbTrain.qImageFns, ...
             opts.qCheckpoint0, 'useGPU', opts.useGPU, 'batchSize', opts.computeBatchSize);
     end
@@ -168,13 +175,14 @@ function [ output_args ] = trainOrientationSupervised( dbTrain, dbVal, varargin 
         %}
         
     end
-    
+    %}
     %% train
     nBatches = floor( dbTrain.numQueries / opts.batchSize );
     trainOrder= randperm(dbTrain.numQueries);
     
     losses = [];
     lr = opts.learningRate;
+    figprev = figure('Name', 'Training images');
     hfigbatchloss = figure('Name', 'Loss per batch');
     figbatchloss = semilogy(1);
     
@@ -202,7 +210,26 @@ function [ output_args ] = trainOrientationSupervised( dbTrain, dbVal, varargin 
                 thisBatchSize = thisBatchSize + size(labels, 2) - 1; %TODO check if correct
                 %% load images
                 [ims, thisNumIms] = loadImages(qID, posIDs, negIDs, dbTrain, net, opts);
-
+                
+                %% preview images in this batch
+                if opts.showTrainingImgs
+                    posCount = size(posIDs, 1);
+                    negCount = size(negIDs, 1);
+                    figure(figprev)
+                    prevsize = max(posCount, negCount);
+                    subplot(3, prevsize, 1)
+                    imshow(ims(:,:,:,1)/255); %query
+                    for i = 1 : posCount
+                        subplot(3, prevsize, i+prevsize)
+                        imshow(ims(:,:,:,1+i)/255);
+                    end
+                    for i = 1 : negCount
+                        subplot(3, prevsize, i+2*prevsize)
+                        imshow(ims(:,:,:,1+posCount+i)/255);
+                    end
+                end
+                
+                
                 %% forward pass
                 % the memory saving related to backPropDepth is obayed 
                 %implicitly due to running netPrepareForTrain before, see the 
@@ -394,9 +421,17 @@ function [ims, num] = loadImages(qID, posIDs, negIDs, dbTrain, net, opts)
     ims_= vl_imreadjpeg(imageFns, 'numThreads', opts.numThreads);
     ims = cat(4, ims_{:});
 
-    ims(:,:,1,:)= ims(:,:,1,:) - net.meta.normalization.averageImage(1,1,1);
-    ims(:,:,2,:)= ims(:,:,2,:) - net.meta.normalization.averageImage(1,1,2);
-    ims(:,:,3,:)= ims(:,:,3,:) - net.meta.normalization.averageImage(1,1,3);
+    %mr=0;
+    %mg=0;
+    %mb=0;
+    
+    mr = net.meta.normalization.currentdataset.averageImage(:,:,1);
+    mg = net.meta.normalization.currentdataset.averageImage(:,:,2);
+    mb = net.meta.normalization.currentdataset.averageImage(:,:,3);
+    
+    ims(:,:,1,:)= ims(:,:,1,:) - median(mr(:));
+    ims(:,:,2,:)= ims(:,:,2,:) - median(mg(:));
+    ims(:,:,3,:)= ims(:,:,3,:) - median(mb(:));
 
     if opts.useGPU
         ims= gpuArray(ims);
