@@ -185,6 +185,7 @@ function [ output_args ] = trainOrientationSupervised( dbTrain, dbVal, varargin 
     figprev = figure('Name', 'Training images');
     hfigbatchloss = figure('Name', 'Loss per batch');
     figbatchloss = semilogy(1);
+    figtest = figure();
     
     for iEpoch = 1 : opts.nEpoch
         ID = sprintf('ep%06d_latest', iEpoch);
@@ -342,7 +343,7 @@ function [ output_args ] = trainOrientationSupervised( dbTrain, dbVal, varargin 
         testNow = iEpoch==opts.nEpoch || rem(iEpoch, opts.epochTestFrequency) == 0;
         if testNow
             test(dbTrain, dbVal, net, opts, obj, auxData, iEpoch,...
-                    trainID, valID, ID);
+                    trainID, valID, ID, figtest);
         end
         relja_display('Epoch: %f.', iEpoch);
         %save net.mat net
@@ -360,7 +361,7 @@ function [obj, auxData] = initObj(dbTrain)
 end
 
 function test(dbTrain, dbVal, net, opts, obj, auxData, iEpoch,...
-                 trainID, valID, ID)
+                 trainID, valID, ID, figtest)
     
     [qFeatVal, dbFeatVal] = computeAllFeats(dbVal, net, opts, valID, true);
     [obj.val.recall(:, end+1), obj.val.rankloss(:, end+1)] = testNet(dbVal, net, opts, valID, qFeatVal, dbFeatVal);
@@ -376,6 +377,7 @@ function test(dbTrain, dbVal, net, opts, obj, auxData, iEpoch,...
     % to save the results
     saveNet(net, obj, opts, auxData, ID, sprintf('epoch-end %d', iEpoch));
 
+    figure(figtest);
     if opts.doDraw, plotResults(obj, opts, auxData); end
 
 end
