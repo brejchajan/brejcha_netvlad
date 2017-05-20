@@ -1,4 +1,4 @@
-function [ db_test_s ] = createDatasetDatabaseStruct( data_path, query_dir_name, dataset_name )
+function [ db_test_s ] = createDatasetDatabaseStruct( data_path, query_src_dir_name, query_dst_dir_name, dataset_name )
 % createDatasetDatabaseStruct
 %   Creates 
     
@@ -33,6 +33,8 @@ function [ db_test_s ] = createDatasetDatabaseStruct( data_path, query_dir_name,
         end
     end
     
+    checkImagesExist(db_names, data_db_path);
+    
     db_cam_params = [db_y db_p db_r db_fov];
     
     %get the reference utmzone for the whole dataset
@@ -42,15 +44,12 @@ function [ db_test_s ] = createDatasetDatabaseStruct( data_path, query_dir_name,
     db_utm = [db_utm_x, db_utm_y]';
     clear db_utm_x db_utm_y;
      
-    q_loc_file = fullfile(data_path, query_dir_name, 'datasetInfoClean.csv')
+    q_loc_file = fullfile(data_path, query_dst_dir_name, 'datasetInfoClean.csv')
     [q_id, q_names, q_lat, q_lon, q_elev, q_y, q_p, q_r, q_fov] = textread(q_loc_file, '%s %s %f %f %f %f %f %f %f', 'delimiter', ', ');
     %append suffix to query names to form complete file names.
     q_suffix = repmat({'.jpg'}, size(q_names, 1), 1);
     q_names = strcat(q_names, q_suffix);
-    %prepend query dir name to query image names.
-    numqueries = size(q_names, 1);
-    q_prefix = repmat({[query_dir_name '/']}, numqueries, 1);
-    %q_names = strcat(q_prefix, q_names);
+    % wgs to UTM
     [q_utm_x, q_utm_y] = wgs2utm(q_lat, q_lon, utmzone, utmhemi);
     q_utm = [q_utm_x, q_utm_y]';
     clear q_utm_x q_utm_y;
@@ -63,20 +62,18 @@ function [ db_test_s ] = createDatasetDatabaseStruct( data_path, query_dir_name,
     db_img_size = size(db_img);
     pano_width = 2*pi/db_fov_s * db_img_size(2);
     
-    parfor i = 1 : size(q_names, 1)
-        q_img_path = fullfile(data_path, query_dir_name, q_names{i});
+    for i = 1 : size(q_names, 1)
+        q_img_path = fullfile(data_path, query_src_dir_name, q_names{i});
+        q_img_dst_path = fullfile(data_path, query_dst_dir_name, q_names{i});
         q_img = imread(q_img_path);
-        q_img_size = size(q_img);
-        nw = (q_fov(i) / (2*pi)) * pano_width;
-        scale = nw / q_img_size(2);
-        nq_img = imresize(q_img, scale);
-        imwrite(nq_img, q_img_path);
+        nq_img = fov_rescale(q_img, q_fov(i), pano_width, db_img_size(1, 1:2));
+        imwrite(nq_img, q_img_dst_path);
     end
     
     
     %% load query sets
-    checkSets(data_path, query_dir_name);
-    q_set_path = [data_path '/' query_dir_name];
+    checkSets(data_path, query_dst_dir_name);
+    q_set_path = [data_path '/' query_dst_dir_name];
     [q_train, q_test, q_val] = loadSets(q_set_path, q_names);
     
     %% load db sets
@@ -179,4 +176,16 @@ function [db] = buildDbStruct(db_names, q_names, db_list, q_list, db_utm, q_utm,
     db.nonTrivPosDistSqThr = nonTrivPosDistSqThr;
     db.dbCamParams = getSetItem(db_names, db_list, db_cam_params);
     db.qCamParams = getSetItem(q_names, q_list, q_cam_params);
+end
+
+
+function checkImagesExist(names, path)
+% Checks whether all images in the list names on given path exist.
+    parfor i = 1 : size(names, 1)
+        fname = names{i};
+        fpath = fullfile(path, fname);
+        if ~exist(fpath, 'file')
+            error(['File name ' fname 'does not exist.']);
+        end
+    end
 end

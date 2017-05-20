@@ -142,11 +142,12 @@ function [ output_args ] = trainOrientationSupervised( dbTrain, dbVal, varargin 
         net = relja_simplenn_move(net, 'gpu');
     end
     
+    %{
     if ~isfield(net.meta.normalization, 'currentdataset')
         net.meta.normalization.currentdataset = struct('averageImage', []);
         net.meta.normalization.currentdataset.averageImage = averageImage(dbTrain);
     end
-    
+    %}
     
     %{
     if ~exist(opts.qCheckpoint0, 'file')
@@ -217,6 +218,7 @@ function [ output_args ] = trainOrientationSupervised( dbTrain, dbVal, varargin 
                     posCount = size(posIDs, 1);
                     negCount = size(negIDs, 1);
                     figure(figprev)
+                    clf(figprev)
                     prevsize = max(posCount, negCount);
                     subplot(3, prevsize, 1)
                     imshow(ims(:,:,:,1)/255); %query
@@ -273,8 +275,8 @@ function [ output_args ] = trainOrientationSupervised( dbTrain, dbVal, varargin 
                 x_p = feats(:, find(labels == 1));   %positive feats
                 x_n = feats(:, find(labels == -1));  %negative feats
 
-                E_p = single(sum((repmat(x_q, [1 size(x_p, 2)]) - x_p).^2, 2));
-                E_n = single(sum((repmat(x_q, [1 size(x_n, 2)]) - x_n).^2, 2));
+                E_p = single(sum((repmat(x_q, [1 size(x_p, 2)]) - x_p).^2, 2) / size(x_p, 2));
+                E_n = single(sum((repmat(x_q, [1 size(x_n, 2)]) - x_n).^2, 2) / size(x_n, 2));
            
                 E_term = E_p - E_n;
                 E = sum(max(E_term, 0));
@@ -421,15 +423,26 @@ function [ims, num] = loadImages(qID, posIDs, negIDs, dbTrain, net, opts)
     num = length(imageFns);
     
     ims_= vl_imreadjpeg(imageFns, 'numThreads', opts.numThreads);
+    thisNumIms = size(imageFns, 1);
+    for iIm= 1:thisNumIms
+        if size(ims_{iIm},3)==1
+            ims_{iIm}= cat(3,ims_{iIm},ims_{iIm},ims_{iIm});
+        end
+    end
+        
     ims = cat(4, ims_{:});
 
     %mr=0;
     %mg=0;
     %mb=0;
     
-    mr = net.meta.normalization.currentdataset.averageImage(:,:,1);
-    mg = net.meta.normalization.currentdataset.averageImage(:,:,2);
-    mb = net.meta.normalization.currentdataset.averageImage(:,:,3);
+    %mr = net.meta.normalization.currentdataset.averageImage(:,:,1);
+    %mg = net.meta.normalization.currentdataset.averageImage(:,:,2);
+    %mb = net.meta.normalization.currentdataset.averageImage(:,:,3);
+    
+    mr = net.meta.normalization.averageImage(:,:,1);
+    mg = net.meta.normalization.averageImage(:,:,2);
+    mb = net.meta.normalization.averageImage(:,:,3);
     
     ims(:,:,1,:)= ims(:,:,1,:) - median(mr(:));
     ims(:,:,2,:)= ims(:,:,2,:) - median(mg(:));

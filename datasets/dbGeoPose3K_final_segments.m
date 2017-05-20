@@ -12,12 +12,12 @@ classdef dbGeoPose3K_final_segments < dbBase
             assert( ismember(set, {'train', 'val', 'test'}) );
             
             %db.name= sprintf('geoPose3K_final_segments_pano_small_oldgp3kquery_%s', set);
-            db.name = sprintf('geoPose3K_final_segments_pano_small_FCN8s_model14_%s', set);
+            db.name = sprintf('geoPose3K_final_segments_pano_small_synth_%s', set);
             %db.name = sprintf('geoPose3K_final_segments_pano_small_Deeplab_model48_%s', set);
             paths= localPaths();
             dbRoot= paths.dsetRootGP3KPano;
             db.dbPath= [dbRoot 'db/'];
-            db.qPath= [dbRoot 'query_FCN8s/segments/color'];
+            db.qPath= [dbRoot 'query_synth/'];
             %db.qPath= [dbRoot 'query_Deeplab_model48/segments/color'];
             
             db.dbLoad();
@@ -66,7 +66,7 @@ classdef dbGeoPose3K_final_segments < dbBase
             q_fov = db.qCamParams(iQuery, 4);
             pos_db_yaws = db.dbCamParams(posIDs, 1);
             yaw_delta = abs(pos_db_yaws - q_yaw);
-            posIDs = posIDs(yaw_delta < (q_fov/2));
+            posIDs = posIDs(yaw_delta < (q_fov/4));
         end
         
         function posIDs= nontrivialPosDb(db, iDb)

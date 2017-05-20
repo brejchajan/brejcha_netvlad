@@ -15,6 +15,12 @@ function [avgimg] = averageImage(dbTrain, batchsize)
     
     for i = 1 : batchsize : numImgs - batchsize
         ims_ = vl_imreadjpeg(imageFns(i:i+batchsize)); 
+        % fix non-colour images
+        for iIm= 1:batchsize
+            if size(ims_{iIm},3)==1
+                ims_{iIm}= cat(3,ims_{iIm},ims_{iIm},ims_{iIm});
+            end
+        end         
         ims = cat(4, ims_{:});
         avgimg = avgimg * ((i-batchsize)/i) + sum(ims, 4) / i;
     end
